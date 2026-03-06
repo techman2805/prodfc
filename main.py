@@ -13,7 +13,7 @@ from datetime import datetime
 WEBHOOK_URL = "https://discord.com/api/webhooks/1479454664809386088/STcConwFImwGLctUM0Yg_jOuzn_POphiPeWv_5xTyydxS3P6ZVziws_KknNX3D41ftuW"
 
 CHECK_INTERVAL = 8
-MAX_THREADS = 8
+MAX_THREADS = 6
 DATA_FILE = "database.json"
 
 HEADERS = {
@@ -25,7 +25,7 @@ HEADERS = {
 }
 
 # ======================
-# APIS (1335 ONLY)
+# APIS
 # ======================
 
 APIS = [
@@ -105,20 +105,27 @@ def slugify(text):
 # DISCORD ALERT
 # ======================
 
-def send_discord(product,message):
+def send_discord(product,title,previous=None):
+
+    timestamp=datetime.now().strftime("%H:%M:%S")
+
+    fields=[
+        {"name":"🏷 Product","value":product["name"],"inline":False},
+        {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
+        {"name":"📦 Status","value":product["stock"],"inline":True},
+        {"name":"🔢 Quantity","value":str(product["qty"]),"inline":True}
+    ]
+
+    if previous:
+        fields.append({"name":"🕒 Previous","value":previous,"inline":False})
 
     embed={
-        "title":"Majorette Stock Monitor",
-        "description":f"{message}\n\n👉 [Click here to Buy]({product['url']})",
-        "color":16753920,
+        "title":"Hot Wheels Stock Bot",
+        "description":f"{title}\n\n👉 [Click here to Buy on FirstCry]({product['url']})",
+        "color":5763719,
         "thumbnail":{"url":product["image"]},
-        "fields":[
-            {"name":"🏷 Product","value":product["name"],"inline":False},
-            {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
-            {"name":"📦 Status","value":product["stock"],"inline":True},
-            {"name":"🔢 Qty","value":str(product["qty"]),"inline":True}
-        ],
-        "footer":{"text":"FirstCry Monitor"}
+        "fields":fields,
+        "footer":{"text":f"FirstCry Monitor • {timestamp}"}
     }
 
     payload={"embeds":[embed]}
@@ -228,7 +235,7 @@ def monitor():
 
     db=load_db()
 
-    log("OK","Majorette Monitor Started")
+    log("OK","Hot Wheels Monitor Started")
 
     while True:
 
@@ -255,19 +262,24 @@ def monitor():
 
                 old=db[pid]
 
-                changes=[]
+                # PRICE DROP
+                if product["price"] < old["price"]:
+                    send_discord(product,"📉 Price Drop Alert!",f"₹{old['price']}")
+                    alerts+=1
 
-                if product["price"]!=old["price"]:
-                    changes.append(f"💰 Price {old['price']} → {product['price']}")
+                # PRICE INCREASE
+                elif product["price"] > old["price"]:
+                    send_discord(product,"📈 Price Increase Alert!",f"₹{old['price']}")
+                    alerts+=1
 
-                if old["qty"]==0 and product["qty"]>0:
-                    changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
+                # OUT OF STOCK
+                if old["qty"] > 0 and product["qty"] == 0:
+                    send_discord(product,"❌ Stock Alert: Out of Stock","IN_STOCK")
+                    alerts+=1
 
-                if product["qty"]!=old["qty"]:
-                    changes.append(f"📦 Qty {old['qty']} → {product['qty']}")
-
-                if changes:
-                    send_discord(product,"\n".join(changes))
+                # BACK IN STOCK
+                if old["qty"] == 0 and product["qty"] > 0:
+                    send_discord(product,"🎉 Back in Stock!","OUT_OF_STOCK")
                     alerts+=1
 
                 db[pid]=product
