@@ -2,225 +2,262 @@ import requests
 import time
 import json
 import os
+import re
 
-# ==========================
-# CONFIG
-# ==========================
-
-WEBHOOK_URL = "https://discord.com/api/webhooks/1479454664809386088/STcConwFImwGLctUM0Yg_jOuzn_POphiPeWv_5xTyydxS3P6ZVziws_KknNX3D41ftuW"
-
+WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
 CHECK_INTERVAL = 5
-
-BASE_URL = "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging"
-
-PARAMS = {
-    "PageNo": 1,
-    "PageSize": 20,
-    "SortExpression": "NewArrivals",
-    "OnSale": 0,
-    "SearchString": "brand",
-    "sorting": "true",
-    "MasterBrand": 113,
-    "pcode": 600119,
-    "isclub": 1
-}
 
 DATA_FILE = "database.json"
 
 HEADERS = {
- "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
- "Accept": "application/json, text/javascript, */*; q=0.01",
- "Referer": "https://www.firstcry.com/",
- "Origin": "https://www.firstcry.com",
- "X-Requested-With": "XMLHttpRequest"
+ "User-Agent":"Mozilla/5.0",
+ "Accept":"application/json",
+ "Referer":"https://www.firstcry.com/",
+ "Origin":"https://www.firstcry.com",
+ "X-Requested-With":"XMLHttpRequest"
 }
 
-# ==========================
+# =============================
+# API CONFIGS
+# =============================
+
+APIS = [
+
+{
+"name":"Hotwheels Monitor",
+
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
+
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"NewArrivals",
+"OnSale":0,
+"SearchString":"brand",
+"OutOfStock":0,
+"MasterBrand":113,
+"pcode":600119,
+"isclub":1
+}
+},
+
+{
+"name":"Brand 113 Monitor",
+
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"popularity",
+"OnSale":5,
+"SearchString":"brand",
+"MasterBrand":113,
+"pcode":380008,
+"isclub":0
+}
+}
+
+]
+
+# =============================
 # SESSION
-# ==========================
+# =============================
 
 session = requests.Session()
 session.headers.update(HEADERS)
 
-# get cookies first
 session.get("https://www.firstcry.com/")
 
-# ==========================
+# =============================
 # DATABASE
-# ==========================
+# =============================
 
-def load_database():
+def load_db():
 
     if os.path.exists(DATA_FILE):
+
         with open(DATA_FILE) as f:
             return json.load(f)
 
     return {}
 
+def save_db(data):
 
-def save_database(data):
+    with open(DATA_FILE,"w") as f:
+        json.dump(data,f)
 
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
+# =============================
+# UTIL
+# =============================
 
-# ==========================
-# DISCORD ALERT
-# ==========================
+def slugify(text):
 
-def send_discord(product, message):
+    text=text.lower()
 
-    embed = {
-        "title": product["name"],
-        "url": product["url"],
-        "description": message,
-        "thumbnail": {"url": product["image"]},
-        "color": 16753920,
-        "fields": [
-            {"name": "Price", "value": f"₹{product['price']}", "inline": True},
-            {"name": "Old Price", "value": f"₹{product['old_price']}", "inline": True},
-            {"name": "Stock", "value": product["stock"], "inline": True},
-            {"name": "Quantity", "value": str(product["qty"]), "inline": True}
-        ]
+    text=re.sub(r'[^a-z0-9]+','-',text)
+
+    return text.strip('-')
+
+# =============================
+# DISCORD
+# =============================
+
+def send_discord(product,message):
+
+    embed={
+        "title":product["name"],
+        "url":product["url"],
+        "description":message,
+        "color":3066993,
+        "image":{"url":product["image"]},
+        "fields":[
+            {"name":"Price","value":f"₹{product['price']}","inline":True},
+            {"name":"MRP","value":f"₹{product['old_price']}","inline":True},
+            {"name":"Stock","value":product["stock"],"inline":True},
+            {"name":"Qty","value":str(product["qty"]),"inline":True}
+        ],
+        "footer":{"text":"FirstCry Monitor"}
     }
 
-    payload = {"embeds": [embed]}
+    payload={"embeds":[embed]}
 
     try:
-        requests.post(WEBHOOK_URL, json=payload)
+        requests.post(WEBHOOK_URL,json=payload)
     except:
-        print("Discord webhook failed")
+        print("Webhook failed")
 
-# ==========================
+# =============================
 # FETCH PRODUCTS
-# ==========================
+# =============================
 
-def fetch_page(page):
+def fetch_products(api,page):
 
-    PARAMS["PageNo"] = page
+    params=api["params"].copy()
 
-    r = session.get(BASE_URL, params=PARAMS)
+    params["PageNo"]=page
 
-    data = r.json()
+    r=session.get(api["url"],params=params)
 
-    response_str = data.get("ProductResponse")
+    data=r.json()
 
-    if not response_str:
+    response=data.get("ProductResponse")
+
+    if not response:
         return []
 
-    response_json = json.loads(response_str)
+    parsed=json.loads(response)
 
-    products = response_json.get("Products", [])
+    products=parsed.get("Products",[])
 
-    print("Products found:", len(products))
+    print(f"{api['name']} Page {page} → {len(products)} products")
 
     return products
 
-# ==========================
+# =============================
 # PARSE PRODUCT
-# ==========================
+# =============================
 
 def parse_product(p):
 
-    qty = int(p.get("CrntStock", 0))
+    qty=int(p.get("CrntStock",0))
 
-    return {
-        "id": str(p.get("PId")),
-        "name": p.get("PNm"),
-        "price": p.get("SP", p.get("MRP")),
-        "old_price": p.get("MRP"),
-        "qty": qty,
-        "stock": "In Stock" if qty > 0 else "Out of Stock",
-        "image": p.get("ImgUrl", ""),
-        "url": "https://www.firstcry.com/p/" + str(p.get("PId"))
+    name=p.get("PNm","")
+    brand=p.get("BNm","")
+
+    brand_slug=slugify(brand)
+    product_slug=slugify(name)
+
+    pid=str(p.get("PId"))
+
+    url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
+
+    image=p.get("ImgUrl","")
+
+    if image and not image.startswith("http"):
+        image="https:"+image
+
+    return{
+        "id":pid,
+        "name":name,
+        "price":p.get("SP",p.get("MRP")),
+        "old_price":p.get("MRP"),
+        "qty":qty,
+        "stock":"In Stock" if qty>0 else "Out of Stock",
+        "image":image,
+        "url":url
     }
 
-# ==========================
+# =============================
 # MONITOR
-# ==========================
+# =============================
 
 def monitor():
 
-    db = load_database()
+    db=load_db()
 
-    print("FirstCry monitor started...")
+    print("FirstCry monitor started")
 
     while True:
 
         try:
 
-            print("Checking FirstCry API...")
+            for api in APIS:
 
-            page = 1
+                page=1
 
-            while True:
+                while True:
 
-                products = fetch_page(page)
+                    products=fetch_products(api,page)
 
-                if not products:
-                    break
+                    if not products:
+                        break
 
-                for p in products:
+                    for p in products:
 
-                    product = parse_product(p)
+                        product=parse_product(p)
 
-                    pid = product["id"]
+                        pid=product["id"]
 
-                    if pid not in db:
+                        if pid not in db:
 
-                        send_discord(product, "🆕 New Product Detected")
+                            send_discord(product,"🆕 New Product")
 
-                        db[pid] = product
-                        continue
+                            db[pid]=product
+                            continue
 
-                    old = db[pid]
+                        old=db[pid]
 
-                    changes = []
+                        changes=[]
 
-                    if product["price"] != old["price"]:
+                        if product["price"]!=old["price"]:
+                            changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
 
-                        changes.append(
-                            f"💰 Price Changed: ₹{old['price']} → ₹{product['price']}"
-                        )
+                        if old["qty"]==0 and product["qty"]>0:
+                            changes.append(f"🚨 Restock: {old['qty']} → {product['qty']}")
 
-                    if product["stock"] != old["stock"]:
+                        if product["qty"]!=old["qty"]:
+                            changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
 
-                        changes.append(
-                            f"📦 Stock Changed: {old['stock']} → {product['stock']}"
-                        )
+                        if changes:
+                            send_discord(product,"\n".join(changes))
 
-                    if old["qty"] == 0 and product["qty"] > 0:
+                        db[pid]=product
 
-                        changes.append(
-                            f"🚨 RESTOCK! Qty: {old['qty']} → {product['qty']}"
-                        )
+                    page+=1
 
-                    if product["qty"] != old["qty"]:
-
-                        changes.append(
-                            f"🔢 Quantity: {old['qty']} → {product['qty']}"
-                        )
-
-                    if changes:
-
-                        send_discord(product, "\n".join(changes))
-
-                    db[pid] = product
-
-                page += 1
-
-            save_database(db)
+            save_db(db)
 
         except Exception as e:
 
-            print("Error:", e)
+            print("Error:",e)
 
         time.sleep(CHECK_INTERVAL)
 
-# ==========================
+# =============================
 # START
-# ==========================
+# =============================
 
-if __name__ == "__main__":
-
+if __name__=="__main__":
     monitor()
