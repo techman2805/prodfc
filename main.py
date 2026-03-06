@@ -9,6 +9,7 @@ import os
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1479454664809386088/STcConwFImwGLctUM0Yg_jOuzn_POphiPeWv_5xTyydxS3P6ZVziws_KknNX3D41ftuW"
 
+
 CHECK_INTERVAL = 5
 
 BASE_URL = "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging"
@@ -20,7 +21,7 @@ PARAMS = {
     "OnSale": 0,
     "SearchString": "brand",
     "sorting": "true",
-    "MasterBrand": 1335,
+    "MasterBrand": 113,
     "pcode": 600119,
     "isclub": 1
 }
