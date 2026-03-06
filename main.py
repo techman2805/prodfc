@@ -4,6 +4,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 # ======================
 # CONFIG
@@ -12,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 WEBHOOK_URL = "https://discord.com/api/webhooks/1479454664809386088/STcConwFImwGLctUM0Yg_jOuzn_POphiPeWv_5xTyydxS3P6ZVziws_KknNX3D41ftuW"
 
 CHECK_INTERVAL = 8
-MAX_THREADS = 5
+MAX_THREADS = 8
 DATA_FILE = "database.json"
 
 HEADERS = {
@@ -70,6 +71,14 @@ session.headers.update(HEADERS)
 session.get("https://www.firstcry.com/")
 
 # ======================
+# LOGGER
+# ======================
+
+def log(level,msg):
+    now=datetime.now().strftime("%H:%M:%S")
+    print(f"[{level}] {now} | {msg}")
+
+# ======================
 # DATABASE
 # ======================
 
@@ -115,7 +124,7 @@ def send_discord(product,message):
     payload={"embeds":[embed]}
 
     try:
-        requests.post(WEBHOOK_URL,json=payload)
+        requests.post(WEBHOOK_URL,json=payload,timeout=10)
     except:
         pass
 
@@ -143,7 +152,7 @@ def fetch_page(api,page):
 
     products=parsed.get("Products",[])
 
-    print(f"{api['name']} Page {page} → {len(products)}")
+    log("DEBUG",f"{api['name']} P{page} → {len(products)} items")
 
     return products
 
@@ -184,6 +193,10 @@ def parse_product(p):
 
 def scan_products():
 
+    start=time.time()
+
+    log("INFO","Scan Starting")
+
     products=[]
 
     with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
@@ -194,10 +207,16 @@ def scan_products():
             for page in range(1,8):
                 futures.append(executor.submit(fetch_page,api,page))
 
+        log("PERF",f"{len(futures)} pages → parallel fetch")
+
         for f in futures:
             result=f.result()
             if result:
                 products.extend(result)
+
+    elapsed=time.time()-start
+
+    log("PERF",f"Fetched pages in {round(elapsed,2)}s")
 
     return products
 
@@ -209,15 +228,18 @@ def monitor():
 
     db=load_db()
 
-    print("Majorette monitor started")
+    log("OK","Majorette Monitor Started")
 
     while True:
+
+        alerts=0
+        start=time.time()
 
         try:
 
             products=scan_products()
 
-            print("Total scanned:",len(products))
+            log("INFO",f"Tracked: {len(products)} items")
 
             for p in products:
 
@@ -228,6 +250,7 @@ def monitor():
 
                     send_discord(product,"🆕 New Product Detected")
                     db[pid]=product
+                    alerts+=1
                     continue
 
                 old=db[pid]
@@ -245,13 +268,18 @@ def monitor():
 
                 if changes:
                     send_discord(product,"\n".join(changes))
+                    alerts+=1
 
                 db[pid]=product
 
             save_db(db)
 
         except Exception as e:
-            print("Monitor error:",e)
+            log("ERROR",f"Monitor error: {e}")
+
+        elapsed=time.time()-start
+
+        log("OK",f"Done in {round(elapsed,2)}s | {len(products)} items | {alerts} alerts")
 
         time.sleep(CHECK_INTERVAL)
 
