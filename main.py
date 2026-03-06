@@ -29,7 +29,6 @@ HEADERS = {
 # ======================
 
 APIS = [
-
 {
 "name":"1335 New Arrivals",
 "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
@@ -44,7 +43,6 @@ APIS = [
 "isclub":1
 }
 },
-
 {
 "name":"1335 Popular",
 "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
@@ -59,7 +57,6 @@ APIS = [
 "isclub":1
 }
 }
-
 ]
 
 # ======================
@@ -105,24 +102,29 @@ def slugify(text):
 # DISCORD ALERT
 # ======================
 
-def send_discord(product,title,previous=None):
+def send_discord(product,title,color,previous=None,analytics=None):
 
     timestamp=datetime.now().strftime("%H:%M:%S")
+
+    qty_text=f"**Only {product['qty']} Left!**" if product["qty"]>0 else "0"
 
     fields=[
         {"name":"🏷 Product","value":product["name"],"inline":False},
         {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
         {"name":"📦 Status","value":product["stock"],"inline":True},
-        {"name":"🔢 Quantity","value":str(product["qty"]),"inline":True}
+        {"name":"🔢 Quantity","value":qty_text,"inline":True}
     ]
 
     if previous:
         fields.append({"name":"🕒 Previous","value":previous,"inline":False})
 
+    if analytics:
+        fields.append({"name":"📊 Analytics","value":analytics,"inline":False})
+
     embed={
         "title":"Hot Wheels Stock Bot",
-        "description":f"{title}\n\n👉 [Click here to Buy on FirstCry]({product['url']})",
-        "color":5763719,
+        "description":f"{title}\n\n👉 **[Click here to Buy on FirstCry]({product['url']})**",
+        "color":color,
         "thumbnail":{"url":product["image"]},
         "fields":fields,
         "footer":{"text":f"FirstCry Monitor • {timestamp}"}
@@ -156,7 +158,6 @@ def fetch_page(api,page):
         return []
 
     parsed=json.loads(response)
-
     products=parsed.get("Products",[])
 
     log("DEBUG",f"{api['name']} P{page} → {len(products)} items")
@@ -189,7 +190,7 @@ def parse_product(p):
         "price":p.get("SP",p.get("MRP")),
         "old_price":p.get("MRP"),
         "qty":qty,
-        "stock":"In Stock" if qty>0 else "Out of Stock",
+        "stock":"🟢 **IN STOCK**" if qty>0 else "🔴 **OUT OF STOCK**",
         "image":image,
         "url":url
     }
@@ -222,7 +223,6 @@ def scan_products():
                 products.extend(result)
 
     elapsed=time.time()-start
-
     log("PERF",f"Fetched pages in {round(elapsed,2)}s")
 
     return products
@@ -253,33 +253,51 @@ def monitor():
                 product=parse_product(p)
                 pid=product["id"]
 
+                now=time.time()
+
                 if pid not in db:
 
-                    send_discord(product,"🆕 New Product Detected")
+                    product["stock_start"]=now
+                    product["status_changes"]=0
                     db[pid]=product
-                    alerts+=1
                     continue
 
                 old=db[pid]
 
+                analytics=f"• Status Changes: {old.get('status_changes',0)}"
+
                 # PRICE DROP
                 if product["price"] < old["price"]:
-                    send_discord(product,"📉 Price Drop Alert!",f"₹{old['price']}")
+                    send_discord(product,"📉 **Price Drop Alert!**",3066993,f"₹{old['price']}",analytics)
                     alerts+=1
 
                 # PRICE INCREASE
-                elif product["price"] > old["price"]:
-                    send_discord(product,"📈 Price Increase Alert!",f"₹{old['price']}")
+                if product["price"] > old["price"]:
+                    send_discord(product,"📈 **Price Increase Alert!**",15105570,f"₹{old['price']}",analytics)
                     alerts+=1
 
                 # OUT OF STOCK
                 if old["qty"] > 0 and product["qty"] == 0:
-                    send_discord(product,"❌ Stock Alert: Out of Stock","IN_STOCK")
+
+                    duration=int((now-old.get("stock_start",now))/60)
+
+                    analytics=f"• Stock Duration: {duration}m\n• Status Changes: {old.get('status_changes',0)+1}"
+
+                    send_discord(product,"🔴 **Stock Alert: Out of Stock**",15158332,"IN_STOCK",analytics)
+
+                    product["status_changes"]=old.get("status_changes",0)+1
                     alerts+=1
 
                 # BACK IN STOCK
                 if old["qty"] == 0 and product["qty"] > 0:
-                    send_discord(product,"🎉 Back in Stock!","OUT_OF_STOCK")
+
+                    product["stock_start"]=now
+
+                    analytics=f"• Status Changes: {old.get('status_changes',0)+1}"
+
+                    send_discord(product,"🎉 **Back in Stock!**",5763719,"OUT_OF_STOCK",analytics)
+
+                    product["status_changes"]=old.get("status_changes",0)+1
                     alerts+=1
 
                 db[pid]=product
