@@ -1,11 +1,15 @@
-
 import requests
 import time
 import json
 import os
 
+# ==========================
+# CONFIG
+# ==========================
+
 WEBHOOK_URL = "https://discord.com/api/webhooks/1479454664809386088/STcConwFImwGLctUM0Yg_jOuzn_POphiPeWv_5xTyydxS3P6ZVziws_KknNX3D41ftuW"
-CHECK_INTERVAL = 2
+
+CHECK_INTERVAL = 5
 
 BASE_URL = "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging"
 
@@ -15,6 +19,7 @@ PARAMS = {
     "SortExpression": "NewArrivals",
     "OnSale": 0,
     "SearchString": "brand",
+    "sorting": "true",
     "MasterBrand": 1335,
     "pcode": 600119,
     "isclub": 1
@@ -23,25 +28,44 @@ PARAMS = {
 DATA_FILE = "database.json"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json"
+ "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+ "Accept": "application/json, text/javascript, */*; q=0.01",
+ "Referer": "https://www.firstcry.com/",
+ "Origin": "https://www.firstcry.com",
+ "X-Requested-With": "XMLHttpRequest"
 }
+
+# ==========================
+# SESSION
+# ==========================
 
 session = requests.Session()
 session.headers.update(HEADERS)
 
+# get cookies first
+session.get("https://www.firstcry.com/")
+
+# ==========================
+# DATABASE
+# ==========================
 
 def load_database():
+
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
             return json.load(f)
+
     return {}
 
 
 def save_database(data):
+
     with open(DATA_FILE, "w") as f:
         json.dump(data, f)
 
+# ==========================
+# DISCORD ALERT
+# ==========================
 
 def send_discord(product, message):
 
@@ -61,8 +85,14 @@ def send_discord(product, message):
 
     payload = {"embeds": [embed]}
 
-    requests.post(WEBHOOK_URL, json=payload)
+    try:
+        requests.post(WEBHOOK_URL, json=payload)
+    except:
+        print("Discord webhook failed")
 
+# ==========================
+# FETCH PRODUCTS
+# ==========================
 
 def fetch_page(page):
 
@@ -72,22 +102,41 @@ def fetch_page(page):
 
     data = r.json()
 
-    return data.get("products", [])
+    response_str = data.get("ProductResponse")
 
+    if not response_str:
+        return []
+
+    response_json = json.loads(response_str)
+
+    products = response_json.get("Products", [])
+
+    print("Products found:", len(products))
+
+    return products
+
+# ==========================
+# PARSE PRODUCT
+# ==========================
 
 def parse_product(p):
 
+    qty = int(p.get("CrntStock", 0))
+
     return {
-        "id": str(p.get("SKU")),
-        "name": p.get("ProductName"),
-        "price": p.get("Price"),
-        "old_price": p.get("OldPrice"),
-        "qty": p.get("AvailableQuantity", 0),
-        "stock": "In Stock" if p.get("AvailableQuantity", 0) > 0 else "Out of Stock",
-        "image": "https:" + p.get("ImagePath", ""),
-        "url": "https://www.firstcry.com" + p.get("ProductUrl", "")
+        "id": str(p.get("PId")),
+        "name": p.get("PNm"),
+        "price": p.get("SP", p.get("MRP")),
+        "old_price": p.get("MRP"),
+        "qty": qty,
+        "stock": "In Stock" if qty > 0 else "Out of Stock",
+        "image": p.get("ImgUrl", ""),
+        "url": "https://www.firstcry.com/p/" + str(p.get("PId"))
     }
 
+# ==========================
+# MONITOR
+# ==========================
 
 def monitor():
 
@@ -98,6 +147,8 @@ def monitor():
     while True:
 
         try:
+
+            print("Checking FirstCry API...")
 
             page = 1
 
@@ -126,26 +177,31 @@ def monitor():
                     changes = []
 
                     if product["price"] != old["price"]:
+
                         changes.append(
                             f"💰 Price Changed: ₹{old['price']} → ₹{product['price']}"
                         )
 
                     if product["stock"] != old["stock"]:
+
                         changes.append(
                             f"📦 Stock Changed: {old['stock']} → {product['stock']}"
                         )
 
                     if old["qty"] == 0 and product["qty"] > 0:
+
                         changes.append(
                             f"🚨 RESTOCK! Qty: {old['qty']} → {product['qty']}"
                         )
 
                     if product["qty"] != old["qty"]:
+
                         changes.append(
                             f"🔢 Quantity: {old['qty']} → {product['qty']}"
                         )
 
                     if changes:
+
                         send_discord(product, "\n".join(changes))
 
                     db[pid] = product
@@ -155,10 +211,15 @@ def monitor():
             save_database(db)
 
         except Exception as e:
+
             print("Error:", e)
 
         time.sleep(CHECK_INTERVAL)
 
+# ==========================
+# START
+# ==========================
 
 if __name__ == "__main__":
+
     monitor()
