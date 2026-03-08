@@ -175,7 +175,12 @@ def parse_product(p):
     name=p.get("PNm","")
     brand=p.get("BNm","")
 
-    qty=int(p.get("CrntStock",0))
+    qty=p.get("CrntStock")
+
+    try:
+        qty=int(qty)
+    except:
+        qty=0
 
     brand_slug=slugify(brand)
     product_slug=slugify(name)
@@ -248,18 +253,37 @@ def monitor():
 
             log("INFO",f"Tracked: {len(products)} items")
 
+            seen=set()
+
             for p in products:
 
-                product=parse_product(p)
-                pid=product["id"]
+                pid=str(p.get("PId"))
 
+                if pid in seen:
+                    continue
+
+                seen.add(pid)
+
+                product=parse_product(p)
                 now=time.time()
 
+                # NEW PRODUCT
                 if pid not in db:
 
                     product["stock_start"]=now
                     product["status_changes"]=0
                     db[pid]=product
+
+                    if product["qty"]>0:
+                        send_discord(
+                            product,
+                            "🆕 **New Product In Stock!**",
+                            3447003,
+                            None,
+                            "• New product detected"
+                        )
+                        alerts+=1
+
                     continue
 
                 old=db[pid]
@@ -277,7 +301,7 @@ def monitor():
                     alerts+=1
 
                 # OUT OF STOCK
-                if old["qty"] > 0 and product["qty"] == 0:
+                if old["qty"]>0 and product["qty"]==0:
 
                     duration=int((now-old.get("stock_start",now))/60)
 
@@ -289,7 +313,7 @@ def monitor():
                     alerts+=1
 
                 # BACK IN STOCK
-                if old["qty"] == 0 and product["qty"] > 0:
+                if old["qty"]==0 and product["qty"]>0:
 
                     product["stock_start"]=now
 
